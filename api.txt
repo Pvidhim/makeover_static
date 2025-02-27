@@ -1,0 +1,17 @@
+image - base64 encoding
+*lips {
+    image
+    color
+}
+
+hair colour 
+{
+    image
+    color
+}
+
+blush {
+    image
+    colour
+}
+    
