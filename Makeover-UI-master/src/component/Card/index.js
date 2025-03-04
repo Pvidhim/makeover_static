@@ -3,6 +3,7 @@ import Compare from "react-compare-image";
 import OpeningText from "./OpeningText";
 import ProcessLips from "./Button/Lips";
 import ProcessEyeshadow from "./Button/eyeshadow";
+import ProcessEyeliner from "./Button/eyeliner";
 import Footer from "../Footer";
 
 const Card = () => {
@@ -82,6 +83,16 @@ const Card = () => {
                       >
                         Eyeshadow
                       </button>
+                      <button
+                        onClick={() => setActiveProcess("Eyeliner")}
+                        className={`py-2 px-4 rounded ${
+                          activeProcess === "Eyeliner"
+                            ? "bg-teal-500 text-white"
+                            : "bg-gray-200 text-black"
+                        }`}
+                      >
+                        Eyeliner
+                      </button>
                     </div>
                     <div className="flex justify-center mt-6">
                       {activeProcess === "Lips" && (
@@ -96,6 +107,13 @@ const Card = () => {
                           base64Image={base64Image}
                           onProcessComplete={handleProcessedImage}
                           showShades={false}  // No shades for eyeshadow
+                        />
+                      )}
+                      {activeProcess === "Eyeliner" && (
+                        <ProcessEyeliner
+                          base64Image={base64Image}
+                          onProcessComplete={handleProcessedImage}
+                          showShades={true}  // Only show eyeliner shades when "eyeliner" is selected
                         />
                       )}
                     </div>
@@ -137,6 +155,16 @@ const Card = () => {
                       >
                         Eyeshadow
                       </button>
+                      <button
+                        onClick={() => setActiveProcess("Eyeliner")}
+                        className={`py-2 px-4 rounded ${
+                          activeProcess === "Eyeliner"
+                            ? "bg-teal-500 text-white"
+                            : "bg-gray-200 text-black"
+                        }`}
+                      >
+                        Eyeliner
+                      </button>
                     </div>
                     <div className="flex justify-center mt-6">
                       {activeProcess === "Lips" && (
@@ -151,6 +179,13 @@ const Card = () => {
                           base64Image={base64Image}
                           onProcessComplete={handleProcessedImage}
                           showShades={false}  // No shades for eyeshadow
+                        />
+                      )}
+                      {activeProcess === "Eyeliner" && (
+                        <ProcessEyeliner
+                          base64Image={base64Image}
+                          onProcessComplete={handleProcessedImage}
+                          showShades={true}  // No shades for eyeshadow
                         />
                       )}
                     </div>

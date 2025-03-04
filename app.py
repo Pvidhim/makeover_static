@@ -6,6 +6,7 @@ from skimage.filters import gaussian
 from test import evaluate
 from flask import jsonify
 import mediapipe as mp
+from scipy.interpolate import splprep, splev
 import random
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -494,53 +495,6 @@ def matte_lips(image, parsing, part=12, color=[]):
     return np.clip(result_image, 0, 255).astype(np.uint8)
 
 
-def glossy_lips(image, parsing, part=12, color=[0, 0, 255], gloss_intensity=2.0, transparency=0.35, lipstick_intensity=0.35, highlight_boost=2.0):
-    """
-    Apply a realistic glossy lipstick effect, ensuring gloss appears only on naturally glossy areas.
-    """
-    # Resize parsing mask to match image dimensions
-    parsing = cv2.resize(parsing, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
-
-    # Create a mask for lower lips only
-    lips_mask = (parsing == part).astype(np.uint8)
-    lips_mask[:lips_mask.shape[0] // 2, :] = 0  # Remove upper lips
-    lips_mask = cv2.GaussianBlur(lips_mask * 255, (7, 7), 3) / 255.0  # Soft edges
-
-    # Convert image to grayscale to detect natural gloss
-    gray_lips = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    # Detect natural **bright** areas where gloss should be applied
-    highlight_mask = cv2.adaptiveThreshold(gray_lips, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 21, -8)
-    highlight_mask = cv2.GaussianBlur(highlight_mask, (5, 5), 2) / 255.0  # Smoothen highlights
-
-    # Only keep **strongest** highlights (top 5% brightest areas)
-    gloss_threshold = np.percentile(gray_lips[lips_mask > 0], 95)  # Top 5% brightest areas
-    refined_gloss_mask = ((gray_lips > gloss_threshold) * lips_mask).astype(np.uint8)
-    refined_gloss_mask = cv2.GaussianBlur(refined_gloss_mask * 255, (5, 5), 2) / 255.0
-    refined_gloss_mask = np.clip(refined_gloss_mask * highlight_boost, 0, 1)  # Boost gloss
-
-    # Apply **stronger lipstick color**
-    color_layer = np.full_like(image, color, dtype=np.uint8)
-    colored_lips = cv2.addWeighted(image, 1 - lipstick_intensity, color_layer, lipstick_intensity, 0)
-
-    # Blend lips naturally
-    result_image = np.zeros_like(image)
-    for c in range(3):
-        result_image[..., c] = lips_mask * colored_lips[..., c] + (1 - lips_mask) * image[..., c]
-
-    # Create **gloss layer ONLY for the real glossy areas**
-    gloss_layer = np.full_like(image, [255, 255, 255], dtype=np.uint8)
-    gloss_layer = (refined_gloss_mask[..., None] * gloss_layer * gloss_intensity).astype(np.uint8)
-
-    # Blend gloss into the lips
-    gloss_overlay = cv2.addWeighted(result_image.astype(np.float32), 1 - transparency, gloss_layer.astype(np.float32), transparency, 0).astype(np.uint8)
-
-    # Apply **precise gloss effect only where the natural shine exists**
-    for c in range(3):
-        result_image[..., c] = (refined_gloss_mask * gloss_overlay[..., c] + (1 - refined_gloss_mask) * result_image[..., c]).astype(np.uint8)
-
-    return np.clip(result_image, 0, 255).astype(np.uint8)
-
 # Apply eyebrow color
 def apply_eyebrow_color(image, parsing, color, alpha=0.05):
     # Extract B, G, R values from the desired color
@@ -575,89 +529,136 @@ def apply_eyebrow_color(image, parsing, color, alpha=0.05):
 
 
 #     return final_image
-def get_eye_interpolated_points(image, face_landmarks):
+def resize_image(image, target_width=1000, min_width=500):
+    """ 
+    Resizes image while maintaining aspect ratio, ensuring the face remains recognizable. 
+    Uses an adaptive sharpening filter to enhance details after resizing.
     """
-    Extract and interpolate points for both eyes to prepare for eyeliner application.
-    """
-    try:
-        left_eye_top_ids = [33, 160, 158]  # Top of the left eye
-        left_eye_bottom_ids = [133, 153, 144]  # Bottom of the left eye
-        right_eye_top_ids = [362, 385, 387]  # Top of the right eye
-        right_eye_bottom_ids = [263, 373, 380]  # Bottom of the right eye
+    height, width = image.shape[:2]
 
-        def extract_landmarks(landmark_ids):
-            return np.array([[face_landmarks.landmark[id].x * image.shape[1],
-                              face_landmarks.landmark[id].y * image.shape[0]]
-                             for id in landmark_ids], dtype=np.float32)
+    # Avoid extreme downscaling to preserve facial details
+    if width > target_width:
+        scale = target_width / width
+    elif width < min_width:
+        scale = min_width / width  # Scale up if image is too small (ensures clarity)
+    else:
+        return image  # Return original if within an optimal size
 
-        left_eye_top = extract_landmarks(left_eye_top_ids)
-        left_eye_bottom = extract_landmarks(left_eye_bottom_ids)
-        right_eye_top = extract_landmarks(right_eye_top_ids)
-        right_eye_bottom = extract_landmarks(right_eye_bottom_ids)
+    new_size = (int(width * scale), int(height * scale))
+    resized_image = cv2.resize(image, new_size, interpolation=cv2.INTER_CUBIC)
 
-        # Dynamic vertical offset for wing effect
-        left_eye_height = np.abs(np.mean(left_eye_top[:, 1]) - np.mean(left_eye_bottom[:, 1]))
-        right_eye_height = np.abs(np.mean(right_eye_top[:, 1]) - np.mean(right_eye_bottom[:, 1]))
-        vertical_offset = max(left_eye_height, right_eye_height) * 0.4  # Reduced for natural look
+    return resized_image
 
-        def interpolate_eye_points(top_points, bottom_points):
-            interp_x = np.linspace(top_points[0][0] - 5, top_points[-1][0] + 5, num=100)  # Slightly extended
-            interp_top_y = np.interp(interp_x, top_points[:, 0], top_points[:, 1] - vertical_offset)
-            interp_bottom_y = np.interp(interp_x, bottom_points[:, 0], bottom_points[:, 1] + vertical_offset)
-            return interp_x, interp_top_y, interp_bottom_y
+def get_face_landmarks(image, attempts=5):
+    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = None
+    for _ in range(attempts):
+        results = face_mesh.process(rgb_image)
+        if results.multi_face_landmarks:
+            break
+    return results.multi_face_landmarks[0] if results.multi_face_landmarks else None
 
-        L_eye_interp = interpolate_eye_points(left_eye_top, left_eye_bottom)
-        R_eye_interp = interpolate_eye_points(right_eye_top, right_eye_bottom)
+def get_upper_eyelid_landmarks(image, face_landmarks):
+    height, width, _ = image.shape
+    
+    upper_left_eyelid = [173, 157, 158, 159, 160, 161, 246, 33, 130]
+    upper_right_eyelid = [398, 384, 385, 386, 387, 388, 466, 263, 359]
+    
+    left_eye_width = abs(face_landmarks.landmark[33].x - face_landmarks.landmark[130].x) * width
+    right_eye_width = abs(face_landmarks.landmark[263].x - face_landmarks.landmark[359].x) * width
 
-        return L_eye_interp, R_eye_interp
+    lift_factor = int(min(left_eye_width, right_eye_width) * 0.4)
 
-    except Exception as e:
-        print(f"Error in get_eye_interpolated_points: {e}")
-        return None
+    right_eye_points = [(int(face_landmarks.landmark[idx].x * width), 
+                         int(face_landmarks.landmark[idx].y * height) - lift_factor) 
+                        for idx in upper_right_eyelid]
+    
+    left_eye_points = [(int(face_landmarks.landmark[idx].x * width), 
+                        int(face_landmarks.landmark[idx].y * height) - lift_factor)
+                       for idx in upper_left_eyelid]
+    
+    return left_eye_points, right_eye_points
+
+def draw_smooth_curve(image, points, color, min_thickness, max_thickness):
+    points = np.array(points, dtype=np.float32)
+
+    if len(points) < 3:
+        return image  
+
+    tck, u = splprep(points.T, s=0.001)
+    u_fine = np.linspace(0, 1, num=400)  # Increase resolution
+    x_new, y_new = splev(u_fine, tck)
+
+    overlay = image.copy()
+
+    def smooth_thickness(t):
+        return min_thickness + (max_thickness - min_thickness) * (1 - np.cos(np.pi * t)) / 2
+
+    num_points = len(x_new)
+    for i in range(1, num_points):
+        t = i / num_points
+        thickness = int(smooth_thickness(t))
+        cv2.line(overlay, (int(x_new[i-1]), int(y_new[i-1])), (int(x_new[i]), int(y_new[i])),
+                 color, thickness, cv2.LINE_AA)
+
+    return overlay
 
 
-def draw_eyeliner(img, interp_pts, color=(0, 0, 0), thickness=6, transparency=0.6):
-    """
-    Apply smooth and properly aligned eyeliner to the eyes using interpolated points.
-    """
-    try:
-        L_eye_interp, R_eye_interp = interp_pts
-        L_interp_x, L_interp_top_y, L_interp_bottom_y = L_eye_interp
-        R_interp_x, R_interp_top_y, R_interp_bottom_y = R_eye_interp
+def draw_wing(image_with_eyeliner, eye_points, direction, shade):
+    """Draws a tapered eyeliner wing with the given shade color."""
+    if not eye_points or len(eye_points) < 2:
+        print("Error: eye_points list is empty or too short!")
+        return
 
-        # Create an overlay for the eyeliner
-        overlay = np.zeros_like(img, dtype=np.uint8)
+    eye_end = eye_points[-1]
+    if eye_end is None:
+        print("Error: eye_end is None!")
+        return
 
-        def draw_eye_eyeliner(interp_x, interp_top_y, interp_bottom_y, overlay, color, thickness):
-            # Create separate curves for top and bottom parts of the eyeliner
-            points_top = np.array([(int(x), int(y)) for x, y in zip(interp_x, interp_top_y)], dtype=np.int32)
-            points_bottom = np.array([(int(x), int(y)) for x, y in zip(interp_x[::-1], interp_bottom_y[::-1])], dtype=np.int32)
+    eye_width = abs(eye_points[0][0] - eye_points[-1][0])
 
-            # Smoothly connect the top and bottom curves
-            eyeliner_shape = np.concatenate((points_top, points_bottom))
+    # Increased wing length for a sharper effect
+    wing_length = max(5, min(int(eye_width * 0.25), 24))  # Max length = 24px
+    wing_height = max(3, min(int(eye_width * 0.10), 10))   # Max height = 10px
+    base_thickness = max(2, min(int(eye_width * 0.10), 7))  # Max base thickness = 7px
 
-            # Draw a filled shape for the eyeliner
-            cv2.fillPoly(overlay, [eyeliner_shape], color)
+    print(f"DEBUG: thickness={base_thickness}, wing_length={wing_length}, wing_height={wing_height}, eye_end={eye_end}")
 
-            # Add additional thickness for depth
-            offset = max(1, thickness // 3)
-            offset_top = points_top - [0, offset]
-            offset_bottom = points_bottom + [0, offset]
-            eyeliner_shape_offset = np.concatenate((offset_top, offset_bottom))
-            cv2.fillPoly(overlay, [eyeliner_shape_offset], color)
+    num_segments = 5  # More segments for a smoother taper
+    shade_bgr = (shade[2], shade[1], shade[0])  # Convert shade to BGR
 
-        # Draw eyeliner for left and right eyes
-        draw_eye_eyeliner(L_interp_x, L_interp_top_y, L_interp_bottom_y, overlay, color, thickness)
-        draw_eye_eyeliner(R_interp_x, R_interp_top_y, R_interp_bottom_y, overlay, color, thickness)
+    for i in range(num_segments):
+        ratio = (i + 1) / num_segments  # Tapering factor
+        start_point = (eye_end[0] + int(direction * ratio * wing_length * 0.4),
+                       eye_end[1] - int(ratio * wing_height * 0.4))
+        end_point = (eye_end[0] + int(direction * ratio * wing_length),
+                     eye_end[1] - int(ratio * wing_height))
 
-        # Blend the overlay with the original image
-        final_image = cv2.addWeighted(overlay, transparency, img, 1 - transparency, 0)
-        return final_image
+        # Thickness decreases gradually towards the tip
+        thickness = max(1, int(base_thickness * (1 - ratio)))
 
-    except Exception as e:
-        print(f"Error in draw_eyeliner: {e}")
-        raise
+        # Use the provided shade instead of black
+        cv2.line(image_with_eyeliner, start_point, end_point, shade_bgr, thickness, cv2.LINE_AA)
 
+
+def apply_eyeliner(image, left_eye_points, right_eye_points, color, transparency=0.85):
+    if left_eye_points is None or right_eye_points is None:
+        return image
+    
+    image_with_eyeliner = image.copy()
+    color_bgr = (color[2], color[1], color[0])
+
+    eye_width = abs(left_eye_points[-1][0] - left_eye_points[0][0])
+    thickness = max(2, min(int(eye_width * 0.14), 8))
+
+    image_with_eyeliner = draw_smooth_curve(image_with_eyeliner, left_eye_points, color_bgr, 2, thickness)
+    image_with_eyeliner = draw_smooth_curve(image_with_eyeliner, right_eye_points, color_bgr, 2, thickness)
+    
+    draw_wing(image_with_eyeliner, left_eye_points, -1, color)
+    draw_wing(image_with_eyeliner, right_eye_points, 1, color)
+    
+    blurred = cv2.GaussianBlur(image_with_eyeliner, (3, 3), 0.5)  # Slight blur for soft edges
+    return cv2.addWeighted(image, 1 - transparency, blurred, transparency, 0)
 
 def smooth_image(image):
     smoothed_image = cv2.bilateralFilter(image, d=9, sigmaColor=75, sigmaSpace=75)
@@ -687,6 +688,7 @@ def get_eyelash_region(landmarks, eyelash_indices, w, h):
     return np.array(eyelash_points, dtype=np.int32)
 
 def create_eyeshadow_mask(image, landmarks):
+
     """
     Create a mask for eyeshadow that stays on the eyelid region, avoiding the eyelashes.
     """
@@ -696,12 +698,13 @@ def create_eyeshadow_mask(image, landmarks):
 
     # Define landmark indices for the eyelids and eyelashes
     left_upper_eyelid_indices = [33, 246, 161, 160, 159, 158, 157, 173]
-    right_upper_eyelid_indices = [362, 398, 384, 385, 386, 387, 388, 466]
+    right_upper_eyelid_indices = [398, 384, 385, 386, 387, 388, 466,263,359]
     left_upper_eyelash_indices = [163, 144, 145, 153, 154, 155]
     right_upper_eyelash_indices = [390, 373, 374, 380, 381, 382]
 
-    left_eye_region = get_eyeshadow_region(landmarks, left_upper_eyelid_indices, w, h, extension_factor=0.02)
-    right_eye_region = get_eyeshadow_region(landmarks, right_upper_eyelid_indices, w, h, extension_factor=0.02)
+    left_eye_region = get_eyeshadow_region(landmarks, left_upper_eyelid_indices, w, h, extension_factor=0.03)
+    right_eye_region = get_eyeshadow_region(landmarks, right_upper_eyelid_indices, w, h, extension_factor=0.03)
+
 
     left_eyelash_region = get_eyelash_region(landmarks, left_upper_eyelash_indices, w, h)
     right_eyelash_region = get_eyelash_region(landmarks, right_upper_eyelash_indices, w, h)
@@ -715,7 +718,7 @@ def create_eyeshadow_mask(image, landmarks):
 
     return mask_left, mask_right
 
-def apply_eyeshadow(image, mask_left, mask_right, color, intensity=0.65):
+def apply_eyeshadow(image, mask_left, mask_right, color, intensity=0.75):
     """
     Apply a natural-looking eyeshadow effect with enhanced blending at the outer edges.
     """
@@ -724,7 +727,7 @@ def apply_eyeshadow(image, mask_left, mask_right, color, intensity=0.65):
     overlay[mask_right == 255] = color
 
     # Increased Gaussian blur for a more natural diffusion
-    blurred_overlay = cv2.GaussianBlur(overlay, (25, 25), 12)
+    blurred_overlay = cv2.GaussianBlur(overlay, (35, 35), 20)
 
     # Reduce intensity slightly to prevent an artificial look
     blended_image = cv2.addWeighted(image, 1, blurred_overlay, intensity, 0)
@@ -733,7 +736,7 @@ def apply_eyeshadow(image, mask_left, mask_right, color, intensity=0.65):
     combined_mask = cv2.bitwise_or(mask_left, mask_right)
 
     # Improve blending by applying **directional blurring**
-    feathered_mask = cv2.GaussianBlur(combined_mask, (45, 25), 15) / 255.0
+    feathered_mask = cv2.GaussianBlur(combined_mask, (55, 55), 30).astype(np.float32) / 255.0
 
     # Apply directional feathering for outer-edge soft blending
     for c in range(3):
@@ -743,10 +746,10 @@ def apply_eyeshadow(image, mask_left, mask_right, color, intensity=0.65):
 
     return blended_image
 
-def get_eyeshadow_region(landmarks, eyelid_indices, w, h, extension_factor=0.002, corner_extension=0.03):
+def get_eyeshadow_region(landmarks, eyelid_indices, w, h ,extension_factor=0.05, corner_extension=0.025):
     """
     Define an eyeshadow region with better coverage at the outer edges.
-    Prevent unnecessary extension over the nose by restricting inner boundary.
+    Increase upward extension, especially for HEIC images.
     """
     try:
         eyelid_points = np.array(
@@ -759,10 +762,10 @@ def get_eyeshadow_region(landmarks, eyelid_indices, w, h, extension_factor=0.002
             dtype=np.int32,
         )
 
-    # Extend upwards for blending and define clean inner/outer boundaries
+    # Extend upwards for better coverage
     extended_points = [(x, int(y - extension_factor * h)) for x, y in eyelid_points]
 
-    # More outer corner extension, but restrict inner corners to avoid nose region
+    # Extend outer corner blending
     leftmost_x = max(eyelid_points[0][0] - int(corner_extension * w), 0)
     rightmost_x = min(eyelid_points[-1][0] + int(corner_extension * w), w - 1)
 
@@ -773,6 +776,7 @@ def get_eyeshadow_region(landmarks, eyelid_indices, w, h, extension_factor=0.002
     region = np.vstack([[leftmost], eyelid_points, [rightmost], extended_points[::-1]])
 
     return np.array(region, dtype=np.int32)
+
 
 
 

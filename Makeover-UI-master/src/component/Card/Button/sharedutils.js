@@ -55,17 +55,18 @@ export const getShadesAndEndpoint = (type) => {
   ];
 
   const eyeshadowShades = [
-    { name: "E_01_8B3A62", color: "#8B3A62" },
-    { name: "E_02_7A264D", color: "#7A264D" },
-    { name: "E_03_5E1F3F", color: "#5E1F3F" },
-    { name: "E_04_4A192E", color: "#4A192E" },
-    { name: "E_05_983D3D", color: "#983D3D" },
-    { name: "E_06_722929", color: "#722929" },
-    { name: "E_07_5C1F1F", color: "#5C1F1F" },
-    { name: "E_08_431616", color: "#431616" },
-    { name: "E_09_8C4F2B", color: "#8C4F2B" },
-    { name: "E_10_703B1E", color: "#703B1E" },
-  ];
+    { name: "E_01_8B3B62", color: "#8B3B62" },
+    { name: "E_03_973D3D", color: "#973D3D" },
+    { name: "M_01_700415", color: "#700415" },
+    { name: "M_10_A95B57", color: "#A95B57" },
+    { name: "B_02_3A5F9A", color: "#3A5F9A" },
+    { name: "G_01_2F5E3D", color: "#2F5E3D" },  // Deep Forest Green  // Muted Royal Blue
+    { name: "G_03_617D45", color: "#617D45" },  // True Orange
+    { name: "Y_03_D48A00", color: "#D48A00" },  // Golden Yellow // Burnt Orange
+    { name: "O_02_E06D32", color: "#E06D32" },  // Sunset Orange
+    { name: "O_03_FF8C42", color: "#FF8C42" },  // Soft Coral Orange
+    
+];
 
   switch (type) {
     case "lipstick":

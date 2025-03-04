@@ -95,7 +95,7 @@ const ProcessLips = ({ base64Image, onProcessComplete, showShades }) => {
               <button
                 key={index}
                 onClick={() => sendImage(base64Image, shade.color, "liner")} // Use "liner" type
-                className="py-3 px-6 rounded-xl border-2 border-black text-black"
+                className="py-3 px-6 rounded-xl text-black"
                 style={{ backgroundColor: shade.color }}
               ></button>
             ))}
