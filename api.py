@@ -393,8 +393,6 @@ def apply_eyeshadow_api():
     return jsonify({'image': processed_image_str}), 200
 
 
-
-
 if __name__ == '__main__':
     table = {
         'hair': 17,

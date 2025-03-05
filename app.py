@@ -493,7 +493,89 @@ def matte_lips(image, parsing, part=12, color=[]):
         result_image[..., c] = (lips_mask * base_lipstick[..., c] + (1 - lips_mask) * image[..., c]).astype(np.uint8)
     
     return np.clip(result_image, 0, 255).astype(np.uint8)
+def glossy_lips(image, parsing, part=12, color=[0, 0, 255], gloss_intensity=2.0, transparency=0.45, lipstick_intensity=0.35, highlight_boost=3.0):
+    """
+    Apply a realistic glossy lipstick effect, ensuring gloss appears only on naturally glossy areas.
+    """
+    # Resize parsing mask to match image dimensions
+    parsing = cv2.resize(parsing, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
 
+    # Create a mask for lower lips only
+    lips_mask = (parsing == part).astype(np.uint8)
+    # lips_mask[:lips_mask.shape[0] // 2, :] = 0  # Remove upper lips
+    lips_mask = cv2.GaussianBlur(lips_mask * 255, (7, 7), 3) / 255.0  # Soft edges
+
+    # Convert image to grayscale to detect natural gloss
+    gray_lips = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Detect natural **bright** areas where gloss should be applied
+    highlight_mask = cv2.adaptiveThreshold(gray_lips, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 21, -8)
+    highlight_mask = cv2.GaussianBlur(highlight_mask, (5, 5), 2) / 255.0  # Smoothen highlights
+
+    # Only keep **strongest** highlights (top 5% brightest areas)
+    gloss_threshold = np.percentile(gray_lips[lips_mask > 0], 93)  # Top 5% brightest areas
+    refined_gloss_mask = ((gray_lips > gloss_threshold) * lips_mask).astype(np.uint8)
+    # refined_gloss_mask = cv2.GaussianBlur(refined_gloss_mask * 255, (5, 5), 2) / 255.0
+    refined_gloss_mask = np.clip(refined_gloss_mask * highlight_boost, 0, 1)  # Boost gloss
+
+    # Apply **stronger lipstick color**
+    color_layer = np.full_like(image, color, dtype=np.uint8)
+    colored_lips = cv2.addWeighted(image, 1 - lipstick_intensity, color_layer, lipstick_intensity, 0)
+
+    # Blend lips naturally
+    result_image = np.zeros_like(image)
+    for c in range(3):
+        result_image[..., c] = lips_mask * colored_lips[..., c] + (1 - lips_mask) * image[..., c]
+
+    # Create **gloss layer ONLY for the real glossy areas**
+    gloss_layer = np.full_like(image, [255, 255, 255], dtype=np.uint8)
+    gloss_layer = (refined_gloss_mask[..., None] * gloss_layer * gloss_intensity).astype(np.uint8)
+
+    # Blend gloss into the lips
+    gloss_overlay = cv2.addWeighted(result_image.astype(np.float32), 1 - transparency, gloss_layer.astype(np.float32), transparency, 0).astype(np.uint8)
+
+    # Apply **precise gloss effect only where the natural shine exists**
+    for c in range(3):
+        result_image[..., c] = (refined_gloss_mask * gloss_overlay[..., c] + (1 - refined_gloss_mask) * result_image[..., c]).astype(np.uint8)
+
+    return np.clip(result_image, 0, 255).astype(np.uint8)
+
+def apply_lip_liner(image, parsing, upper_lip, lower_lip, color=(120, 0, 60), liner_thickness=2, blur_intensity=3, liner_intensity=3):
+    """
+    Apply a precise and natural lip liner along the vermilion border while:
+    - Avoiding the inner lip area.
+    - Ensuring the liner is only on the outer edges.
+    - Blending smoothly for a natural effect.
+    """
+
+    # Resize parsing mask if needed
+    if parsing.shape[:2] != image.shape[:2]:
+        parsing = cv2.resize(parsing, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+
+    # Create a binary mask for lips
+    lips_mask = ((parsing == upper_lip) | (parsing == lower_lip)).astype(np.uint8) * 255
+
+    # Detect the outer lip contour
+    contours, _ = cv2.findContours(lips_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    liner_mask = np.zeros_like(image, dtype=np.uint8)
+
+    if contours:
+        # Draw the lip liner along the vermilion border
+        cv2.drawContours(liner_mask, contours, -1, color, thickness=liner_thickness)
+
+    # Convert to grayscale and blur for smooth blending
+    liner_mask_gray = cv2.cvtColor(liner_mask, cv2.COLOR_BGR2GRAY)
+    blurred_liner = cv2.GaussianBlur(liner_mask_gray, (blur_intensity * 2 + 1, blur_intensity * 2 + 1), blur_intensity)
+
+    # Adjust liner intensity
+    alpha = (blurred_liner.astype(np.float32) / 255.0) * liner_intensity
+    alpha = np.clip(alpha, 0, 1)
+    alpha = np.expand_dims(alpha, axis=-1)  # Match image channels
+
+    # Blend the lip liner with the original image
+    output = (image * (1 - alpha) + np.array(color) * alpha).astype(np.uint8)
+
+    return output
 
 # Apply eyebrow color
 def apply_eyebrow_color(image, parsing, color, alpha=0.05):
@@ -687,6 +769,44 @@ def get_eyelash_region(landmarks, eyelash_indices, w, h):
 
     return np.array(eyelash_points, dtype=np.int32)
 
+# def apply_gradient_mask(mask):
+#     """Apply a radial gradient to soften the outer edges of the eyeshadow mask."""
+#     h, w = mask.shape
+#     y, x = np.indices((h, w))
+#     mask_indices = np.where(mask == 255)
+#     if len(mask_indices[0]) == 0:
+#         return mask  # No mask detected
+#     # Find the center of the eyeshadow region
+#     center_x, center_y = np.mean(mask_indices[1]), np.mean(mask_indices[0])
+#     # Compute distance from the center
+#     distance = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
+#     max_distance = np.max(distance[mask == 255])
+#     # Create a fading gradient effect
+#     gradient = np.clip(1 - (distance / max_distance), 0, 1) * 255
+#     return (mask * (gradient / 255)).astype(np.uint8)
+
+
+def apply_gradient_mask(mask):
+    """
+    Creates a gradient effect on the mask, fading out gradually.
+    """
+    h, w = mask.shape
+    gradient = np.linspace(1, 0, int(h * 0.3)).reshape(-1, 1)  # Vertical gradient fade
+    full_gradient = np.zeros_like(mask, dtype=np.float32)
+    
+    y_indices = np.where(mask > 0)[0]  # Get y-coordinates of mask area
+    if y_indices.size > 0:
+        min_y, max_y = y_indices.min(), y_indices.max()
+        fade_region = full_gradient[min_y:max_y, :]
+        
+        fade_length = min(fade_region.shape[0], gradient.shape[0])
+        fade_region[:fade_length] = gradient[:fade_length]  # Apply gradient
+
+        full_gradient[min_y:max_y, :] = fade_region
+
+    return (mask * full_gradient).astype(np.uint8)
+
+
 def create_eyeshadow_mask(image, landmarks):
 
     """
@@ -715,19 +835,21 @@ def create_eyeshadow_mask(image, landmarks):
 
     cv2.fillPoly(mask_right, [right_eye_region], 255)
     cv2.fillPoly(mask_right, [right_eyelash_region], 0)  # Exclude the eyelash region
-
+    # Apply gradient effect for smooth blending
+    mask_left = apply_gradient_mask(mask_left)
+    mask_right = apply_gradient_mask(mask_right)
     return mask_left, mask_right
 
-def apply_eyeshadow(image, mask_left, mask_right, color, intensity=0.75):
+def apply_eyeshadow(image, mask_left, mask_right, color, intensity=0.85):
     """
     Apply a natural-looking eyeshadow effect with enhanced blending at the outer edges.
     """
     overlay = np.zeros_like(image, dtype=np.uint8)
-    overlay[mask_left == 255] = color
-    overlay[mask_right == 255] = color
+    overlay[mask_left > 0] = color
+    overlay[mask_right > 0] = color
 
     # Increased Gaussian blur for a more natural diffusion
-    blurred_overlay = cv2.GaussianBlur(overlay, (35, 35), 20)
+    blurred_overlay = cv2.GaussianBlur(overlay, (25, 25), 15)
 
     # Reduce intensity slightly to prevent an artificial look
     blended_image = cv2.addWeighted(image, 1, blurred_overlay, intensity, 0)
@@ -746,7 +868,7 @@ def apply_eyeshadow(image, mask_left, mask_right, color, intensity=0.75):
 
     return blended_image
 
-def get_eyeshadow_region(landmarks, eyelid_indices, w, h ,extension_factor=0.05, corner_extension=0.025):
+def get_eyeshadow_region(landmarks, eyelid_indices, w, h ,extension_factor=0.05, corner_extension=0.03):
     """
     Define an eyeshadow region with better coverage at the outer edges.
     Increase upward extension, especially for HEIC images.
