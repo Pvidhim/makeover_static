@@ -43,6 +43,7 @@ export const getShadesAndEndpoint = (type) => {
 
   const eyelinerShades = [
     { name: "E_07_DarkPlum", color: "#4B0082" },
+    { name: "E_01_0D0D0D", color: "#0D0D0D" }, // Dark Black
     { name: "E_08_DeepTeal", color: "#014B43" },
     { name: "E_09_DarkEmerald", color: "#046307" },
     { name: "E_10_Charcoal", color: "#36454F" },
