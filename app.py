@@ -749,8 +749,6 @@ def smooth_image(image):
 
 
 #Eyeshadow 
-
-
 def get_eyelash_region(landmarks, eyelash_indices, w, h):
     """
     Define an eyelash region that should not be covered by eyeshadow.

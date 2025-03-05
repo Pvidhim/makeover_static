@@ -73,6 +73,7 @@ const Card = () => {
                       >
                         Lipstick
                       </button>
+
                       <button
                         onClick={() => setActiveProcess("Eyeshadow")}
                         className={`py-2 px-4 rounded ${
@@ -83,6 +84,7 @@ const Card = () => {
                       >
                         Eyeshadow
                       </button>
+                      
                       <button
                         onClick={() => setActiveProcess("Eyeliner")}
                         className={`py-2 px-4 rounded ${
