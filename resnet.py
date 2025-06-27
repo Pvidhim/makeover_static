@@ -53,7 +53,7 @@ def create_layer_basic(in_chan, out_chan, bnum, stride=1):
     for i in range(bnum-1):
         layers.append(BasicBlock(out_chan, out_chan, stride=1))
     return nn.Sequential(*layers)
-
+3
 
 class Resnet18(nn.Module):
     def __init__(self):

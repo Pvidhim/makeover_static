@@ -28,13 +28,14 @@ const ProcessEyeshadow = ({ base64Image, onProcessComplete }) => {
 
     const data = { image: base64Image, shade };
 
-    fetch(`http://192.168.1.21:4999/${endpoint}`, {
+    fetch(`http://localhost:4999/${endpoint}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(data),
     })
+    
       .then((response) => response.json())
       .then((data) => {
         console.log("Response from Backend:", data); // ✅ Log backend response

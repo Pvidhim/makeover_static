@@ -17,7 +17,7 @@ const ImageUploader = () => {
   const sendImage = (base64Image) => {
     const data = { image: base64Image };
     console.log("Sending image to server:", data);  // Debug log
-    fetch("http://192.168.1.24:4999/lips", {
+    fetch("http://localhost:4999/lips", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
